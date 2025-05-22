@@ -1,0 +1,101 @@
+<div class="flex flex-col min-h-screen bg-gray-50">
+  <!-- Navbar -->
+  <app-navbar></app-navbar>
+
+  <!-- Main Content -->
+  <main class="flex-grow container mx-auto px-4 py-12 mt-16"> <!-- Added mt-16 for spacing -->
+    <!-- Spinner -->
+    <div *ngIf="isLoading" class="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50">
+      <mat-spinner class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500" diameter="50"></mat-spinner>
+    </div>
+
+    <!-- Form Section -->
+    <div class="max-w-md mx-auto bg-white shadow-lg rounded-lg p-6">
+      <h2 class="text-2xl font-bold mb-4 text-center text-gray-800">Enter Team Names</h2>
+      <form [formGroup]="teamForm" (ngSubmit)="onSubmit()" class="space-y-4">
+        <!-- Home Team Input -->
+        <mat-form-field class="w-full">
+          <mat-label>Home Team</mat-label>
+          <input matInput formControlName="home_team" placeholder="Enter home team name" />
+          <mat-error *ngIf="teamForm.get('home_team')?.hasError('required')" class="text-red-500">
+            Home team is required.
+          </mat-error>
+        </mat-form-field>
+
+        <!-- Away Team Input -->
+        <mat-form-field class="w-full">
+          <mat-label>Away Team</mat-label>
+          <input matInput formControlName="away_team" placeholder="Enter away team name" />
+          <mat-error *ngIf="teamForm.get('away_team')?.hasError('required')" class="text-red-500">
+            Away team is required.
+          </mat-error>
+        </mat-form-field>
+
+        <!-- Submit Button -->
+        <button
+          mat-raised-button
+          color="primary"
+          type="submit"
+          class="w-full bg-blue-600 text-white hover:bg-blue-700 transition duration-300 transform hover:scale-105"
+          [disabled]="teamForm.invalid"
+        >
+          Get Comparison Data
+        </button>
+      </form>
+    </div>
+
+    <!-- Comparison Data Section -->
+    <div *ngIf="comparisonData && comparisonData.length > 0" class="mt-8">
+      <h2 class="text-2xl font-bold mb-6 text-center text-gray-800">Player Comparison by Position</h2>
+      <mat-table [dataSource]="comparisonData" class="w-full mat-elevation-z8 rounded-lg overflow-hidden">
+        <!-- Position Column -->
+        <ng-container matColumnDef="position">
+          <mat-header-cell *matHeaderCellDef class="font-bold bg-gray-100"> Position </mat-header-cell>
+          <mat-cell *matCellDef="let element" class="p-4"> {{ element.position }} </mat-cell>
+        </ng-container>
+
+        <!-- Home Player Column -->
+        <ng-container matColumnDef="homePlayer">
+          <mat-header-cell *matHeaderCellDef class="font-bold bg-gray-100"> {{ home_team }} </mat-header-cell>
+          <mat-cell *matCellDef="let element" class="p-4">
+            <div *ngIf="element.homePlayer" class="flex items-center space-x-4">
+              <span class="font-medium">{{ element.homePlayer.name }}</span>
+              <span class="text-sm text-gray-500">#{{ element.homePlayer.jersey }}</span>
+              <span class="text-sm text-gray-700">{{ element.homePlayer.value | marketValue }}</span>
+            </div>
+            <div *ngIf="!element.homePlayer" class="text-gray-500">No player data</div>
+          </mat-cell>
+        </ng-container>
+
+        <!-- Away Player Column -->
+        <ng-container matColumnDef="awayPlayer">
+          <mat-header-cell *matHeaderCellDef class="font-bold bg-gray-100"> {{ away_team }} </mat-header-cell>
+          <mat-cell *matCellDef="let element" class="p-4">
+            <div *ngIf="element.awayPlayer" class="flex items-center space-x-4">
+              <span class="font-medium">{{ element.awayPlayer.name }}</span>
+              <span class="text-sm text-gray-500">#{{ element.awayPlayer.jersey }}</span>
+              <span class="text-sm text-gray-700">{{ element.awayPlayer.value | marketValue }}</span>
+            </div>
+            <div *ngIf="!element.awayPlayer" class="text-gray-500">No player data</div>
+          </mat-cell>
+        </ng-container>
+
+        <mat-header-row *matHeaderRowDef="['position', 'homePlayer', 'awayPlayer']" class="bg-gray-100"></mat-header-row>
+        <mat-row *matRowDef="let row; columns: ['position', 'homePlayer', 'awayPlayer'];" class="hover:bg-gray-50 transition duration-300"></mat-row>
+      </mat-table>
+    </div>
+
+    <!-- Insights Section -->
+    <div *ngIf="insights" class="mt-8">
+      <h2 class="text-2xl font-bold mb-4 text-center text-gray-800">Insights</h2>
+      <mat-card class="mat-elevation-z4 bg-white rounded-lg p-6">
+        <mat-card-content>
+          <p class="whitespace-pre-line text-gray-700">{{ insights }}</p>
+        </mat-card-content>
+      </mat-card>
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <app-footer></app-footer>
+</div>

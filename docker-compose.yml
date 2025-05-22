@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  fastapi-app:
+    build: ./transfermarkt-api
+    container_name: fastapi-container
+    ports:
+      - "9000:9000"
+    depends_on:
+      - redis
+    environment:
+      - REDIS_HOST=redis
+    env_file:
+      - ./transfermarkt-api/.env
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend/betting-analysis
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    restart: unless-stopped
+
+  redis:
+    image: "redis:alpine"
+    container_name: redis-container
+    ports:
+      - "6379:6379"
+    restart: unless-stopped

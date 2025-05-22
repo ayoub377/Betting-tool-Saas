@@ -1,0 +1,158 @@
+<div class="flex flex-col min-h-screen bg-gray-50">
+  <!-- Navbar -->
+  <app-navbar></app-navbar>
+
+  <!-- Main Content -->
+  <main class="flex-grow container mx-auto px-4 py-12 mt-16"> <!-- Added mt-16 for spacing -->
+    <!-- Real Time Odds Section -->
+    <section class="bg-white shadow-lg rounded-lg p-6">
+      <h1 class="text-3xl font-bold text-gray-800 mb-6 text-center">Real-Time Odds</h1>
+
+  <!-- League and Bookmaker Selection + EV Button Wrapper -->
+  <div class="flex flex-col md:flex-row items-start justify-center gap-6 mt-6">
+    <!-- League and Bookmaker Selection Form -->
+    <div class="max-w-2xl mx-auto bg-gradient-to-r from-blue-600 to-purple-600 shadow-lg rounded-lg p-6">
+      <h2 class="text-2xl font-bold mb-4 text-center text-white">Select League and Bookmaker</h2>
+      <form [formGroup]="oddsForm" (ngSubmit)="onSubmit()" class="space-y-4">
+        <!-- League Selection -->
+        <mat-form-field class="w-full bg-white/90 rounded-lg p-2">
+          <mat-label class="text-gray-800">Select League</mat-label>
+          <mat-select formControlName="league" [(value)]="selectedLeague">
+            <mat-option *ngFor="let league of leagues" [value]="league.value">
+              <div class="flex items-center">
+                <img
+                  src="assets/images/{{league.value}}.png"
+                  [attr.loading]="'lazy'"
+                  class="w-8 h-8 mr-4"
+                />
+                <span class="text-gray-800">{{ league.label }}</span>
+              </div>
+            </mat-option>
+          </mat-select>
+          <mat-error *ngIf="oddsForm.get('league')?.hasError('required')" class="text-red-500">
+            League selection is required.
+          </mat-error>
+        </mat-form-field>
+
+        <!-- Bookmaker Selection -->
+        <mat-form-field class="w-full bg-white/90 rounded-lg p-2">
+          <mat-label class="text-gray-800">Select Bookmaker (Optional)</mat-label>
+          <mat-select formControlName="bookmaker" [(ngModel)]="selectedBookmaker" multiple>
+            <mat-option *ngFor="let bookmaker of bookmakers" [value]="bookmaker" [disabled]="bookmaker === 'Pinnacle'">
+              <span class="text-gray-800">{{ bookmaker }}</span>
+            </mat-option>
+          </mat-select>
+          <mat-hint *ngIf="!selectedBookmaker" class="text-gray-600">
+            If left unselected, Pinnacle odds with vigorish removed will be shown.
+          </mat-hint>
+        </mat-form-field>
+
+        <!-- Matches in the next hour Checkbox -->
+        <div class="flex items-center mt-4">
+          <mat-checkbox
+            [(ngModel)]="allMatches"
+            (change)="toggleMatches()"
+            class="text-lg text-white hover:text-blue-200 transition-colors duration-300"
+          >
+            Show only matches in the next hour
+          </mat-checkbox>
+        </div>
+
+        <!-- Submit Button -->
+        <button
+          mat-raised-button
+          color="primary"
+          type="submit"
+          class="w-full bg-white text-blue-600 hover:bg-gray-100 transition duration-300 transform hover:scale-105"
+          [disabled]="oddsForm.invalid || isLoading"
+        >
+          {{ isLoading ? 'Fetching Data...' : 'Get Comparison Data' }}
+        </button>
+      </form>
+    </div>
+
+    <!-- EV Calculation Button (Only Visible When Matches Exist) -->
+    <div *ngIf="(oddsData$ | async) as matches" class="flex flex-col items-center justify-center p-6 bg-white shadow-lg rounded-lg">
+      <h3 class="text-xl font-bold text-gray-800 mb-4">Calculate Expected Value</h3>
+      <button
+        mat-raised-button
+        class="bg-green-500 text-white px-6 py-3 rounded-lg hover:bg-green-600 transition duration-300"
+        (click)="calculateEV()"
+        [disabled]="isNormalUser"
+      >
+        {{ isNormalUser ? 'Upgrade to Unlock' : 'Calculate EV' }}
+      </button>
+    </div>
+  </div>
+
+
+      <!-- Selected League Display -->
+      <p class="mt-6 text-lg text-gray-700 text-center">
+        You selected: <span class="font-bold text-blue-600">{{ getSelectedLeagueName() || 'Nothing!' }}</span>
+      </p>
+    </section>
+
+    <!-- Loading Indicator -->
+    <ng-container *ngIf="isLoading">
+      <div class="mt-8 flex justify-center">
+        <div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+      </div>
+    </ng-container>
+
+    <!-- Odds Data Section -->
+    <section *ngIf="(oddsData$ | async) as matches" class="mt-8">
+
+      <h3 class="text-2xl font-bold text-gray-800 mb-6 text-center">Odds Data</h3>
+
+      <!-- Check if matches array is empty -->
+      <div *ngIf="matches.length === 0" class="text-center text-gray-500">
+        <svg class="w-12 h-12 mx-auto mb-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+        </svg>
+        <p>No matches are taking place.</p>
+      </div>
+
+      <!-- Match Cards -->
+      <div *ngIf="matches.length > 0" class="space-y-6">
+        <div *ngFor="let match of matches" class="bg-white shadow-lg rounded-lg p-6 hover:shadow-xl transition-shadow duration-300">
+          <!-- Match Info -->
+          <div class="mb-6 border-b border-gray-200 pb-4">
+            <p class="text-gray-700"><strong>Home Team:</strong> {{ match.home_team }}</p>
+            <p class="text-gray-700"><strong>Away Team:</strong> {{ match.away_team }}</p>
+            <p class="text-gray-700"><strong>Commence Time:</strong> {{ match.commence_time | date:'medium' }}</p>
+          </div>
+
+          <!-- Bookmakers Grid -->
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div *ngFor="let bookmaker of match.bookmakers" class="bg-gray-50 rounded-lg p-4 border border-gray-200 hover:shadow-md transition-shadow duration-300">
+              <!-- Bookmaker Name -->
+              <h5 class="text-lg font-semibold text-indigo-600 mb-4">{{ bookmaker.name | titlecase }}</h5>
+
+              <!-- Markets and Outcomes -->
+              <div *ngFor="let market of bookmaker.markets" class="mb-4">
+                <ul class="space-y-2">
+                  <li *ngFor="let outcome of market.outcomes" class="p-3 bg-indigo-100 rounded-lg hover:bg-indigo-200 transition-colors duration-300">
+                    <div class="flex justify-between items-center">
+                      <span class="text-gray-700 font-medium">{{ outcome.name }}</span>
+                      <span class="text-gray-900 font-semibold">Price: {{ outcome.price }}</span>
+                      <span *ngIf="outcome.no_vig_price" class="text-gray-900 font-semibold">
+                        No Vig: {{ outcome.no_vig_price }}
+                      </span>
+                    </div>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+    <!-- No Odds Data Message -->
+    <div *ngIf="(oddsData$ | async) === null" class="mt-8 text-center text-gray-500">
+      <p>No odds data available.</p>
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <app-footer></app-footer>
+</div>

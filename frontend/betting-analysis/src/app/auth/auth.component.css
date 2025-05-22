@@ -1,0 +1,7 @@
+.dropdown {
+  @apply absolute right-0 mt-2 w-48 bg-white text-gray-900 border border-gray-200 rounded-lg shadow-lg opacity-0 transform scale-95 transition-all duration-300;
+}
+
+.dropdown-open {
+  @apply opacity-100 scale-100;
+}
