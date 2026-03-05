@@ -1,3 +1,30 @@
-./stats-soccer
-./front
-./transfermarkt-api/service-account.json
+# Node
+node_modules/
+npm-debug.log*
+.next/
+dist/
+build/
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+*.egg-info/
+.pytest_cache/
+
+# Scraper outputs / data
+scraper_outputs/
+trained_models/
+*.png
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+/stats-soccer
