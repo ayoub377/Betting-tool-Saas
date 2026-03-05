@@ -20,7 +20,7 @@ __pycache__/
 scraper_outputs/
 trained_models/
 *.png
-
+service-account.json
 # IDE
 .idea/
 .vscode/
