@@ -4,6 +4,8 @@ npm-debug.log*
 .next/
 dist/
 build/
+.env.local
+.env*.local
 
 # Python
 venv/
