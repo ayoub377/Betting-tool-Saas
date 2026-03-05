@@ -14,14 +14,6 @@ services:
       - ./transfermarkt-api/.env
     restart: unless-stopped
 
-  frontend:
-    build:
-      context: ./frontend-bet
-      dockerfile: Dockerfile
-    ports:
-      - "80:80"
-    restart: unless-stopped
-
   redis:
     image: "redis:alpine"
     container_name: redis-container
