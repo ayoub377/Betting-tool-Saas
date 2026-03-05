@@ -2,7 +2,7 @@ name: Deploy FastAPI to ECS
 
 on:
   push:
-    branches: [main]
+    branches: [master]
 
 env:
   AWS_REGION: ue-west-3
