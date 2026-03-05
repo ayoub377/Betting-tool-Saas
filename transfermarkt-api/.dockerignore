@@ -1,0 +1,10 @@
+# .dockerignore for FastAPI Backend
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.git
+.github
