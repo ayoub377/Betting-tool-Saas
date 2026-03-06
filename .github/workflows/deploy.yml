@@ -47,16 +47,34 @@ jobs:
                --task-definition fastapi-app \
             --query taskDefinition > task-definition.json
 
+      - name: Clean task definition JSON
+        run: |
+          cat task-definition.json | \
+          python3 -c "
+          import json,sys
+          t = json.load(sys.stdin)
+          t.pop('enableFaultInjection', None)
+          t.pop('registeredAt', None)
+          t.pop('registeredBy', None)
+          t.pop('status', None)
+          t.pop('revision', None)
+          t.pop('taskDefinitionArn', None)
+          t.pop('requiresAttributes', None)
+          t.pop('compatibilities', None)
+          print(json.dumps(t))
+          " > task-definition-clean.json
+          mv task-definition-clean.json task-definition.json
+
       - name: Update image in task definition
         id: task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v2
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
           task-definition: task-definition.json
           container-name: ${{ env.CONTAINER_NAME }}
           image: ${{ steps.build-image.outputs.image }}
 
       - name: Deploy to ECS
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
         with:
           task-definition: ${{ steps.task-def.outputs.task-definition }}
           service: ${{ env.ECS_SERVICE }}
