@@ -8,7 +8,7 @@ env:
   AWS_REGION: eu-west-3
   ECR_REPOSITORY: fastapi-app
   ECS_CLUSTER: fastapi-cluster
-  ECS_SERVICE: fastapi-service
+  ECS_SERVICE: fastapi-app-service
   CONTAINER_NAME: fastapi-app
 
 jobs:
