@@ -43,8 +43,8 @@ jobs:
 
       - name: Download current task definition
         run: |
-          aws ecs describe-task-definition \
-            --task-definition fastapi-task \
+           aws ecs describe-task-definition \
+               --task-definition fastapi-app \
             --query taskDefinition > task-definition.json
 
       - name: Update image in task definition
