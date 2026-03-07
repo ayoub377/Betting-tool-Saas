@@ -5,8 +5,10 @@ import json
 from datetime import datetime
 from pathlib import Path  # For creating an output directory if needed
 
+import os
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -46,9 +48,15 @@ class FlashScoreScraper:
         self.logger.info("Initializing FlashScoreScraper...")
         self.BASE_URL = "https://www.flashscore.com/"
         self.options = Options()
+        # Point to Debian's chromium binary (not google-chrome)
+        chrome_bin = os.environ.get("CHROME_BIN")
+        if chrome_bin:
+            self.options.binary_location = chrome_bin
         self.options.add_argument("--headless=new")
         self.options.add_argument('--no-sandbox')
         self.options.add_argument('--disable-dev-shm-usage')
+        self.options.add_argument('--disable-gpu')
+        self.options.add_argument('--single-process')
         self.options.add_argument("--disable-images")
         self.options.add_argument("--blink-settings=imagesEnabled=false")
         # Persistence settings
@@ -59,6 +67,10 @@ class FlashScoreScraper:
 
     def _get_driver(self):
         self.logger.debug("Creating new WebDriver instance.")
+        chromedriver_path = os.environ.get("CHROMEDRIVER_PATH")
+        if chromedriver_path:
+            service = Service(executable_path=chromedriver_path)
+            return webdriver.Chrome(service=service, options=self.options)
         return webdriver.Chrome(options=self.options)
 
     def _navigate_to_lineups(self, driver, wait, match_id):
