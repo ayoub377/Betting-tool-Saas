@@ -41,8 +41,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy installed Python packages from builder
 COPY --from=builder /install /usr/local
 
-# Create non-root user for security
-RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser
+# Create non-root user for security (with a writable home for Chrome profile data)
+RUN groupadd -r appuser && useradd -r -g appuser -d /home/appuser -m -s /sbin/nologin appuser
+
+# Set environment variables for Chromium (Debian installs as 'chromium', not 'google-chrome')
+ENV CHROME_BIN=/usr/bin/chromium
+ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
 
 WORKDIR /app
 
