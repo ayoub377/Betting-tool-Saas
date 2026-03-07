@@ -1,10 +1,66 @@
-# .dockerignore for FastAPI Backend
+# ===== Version Control =====
+.git
+.github
+.gitignore
+
+# ===== Python =====
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 .Python
-env/
+*.egg-info/
+*.egg
+dist/
+build/
+wheels/
+
+# ===== Virtual Environments =====
+.venv/
 venv/
-.git
-.github
+env/
+ENV/
+
+# ===== IDE =====
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ===== Testing =====
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# ===== Docker (prevent recursive copy) =====
+Dockerfile
+docker-compose*.yml
+
+# ===== CI/CD =====
+.github/
+
+# ===== Poetry/Dev Files =====
+pyproject.toml
+poetry.lock
+
+# ===== Documentation =====
+*.md
+docs/
+LICENSE
+
+# ===== OS Files =====
+.DS_Store
+Thumbs.db
+
+# ===== Sensitive Files (should NOT be in image) =====
+.env.local
+.env.development
+*.bak
+*.log
+
+# ===== Misc =====
+.claude/

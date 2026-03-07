@@ -1,30 +1,52 @@
-version: '3.8'
-
 services:
   fastapi-app:
-    build: ./transfermarkt-api
+    build:
+      context: ./transfermarkt-api
+      dockerfile: Dockerfile
     container_name: fastapi-container
     ports:
       - "9000:9000"
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     environment:
       - REDIS_HOST=redis
     env_file:
       - ./transfermarkt-api/.env
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/api/docs"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   frontend:
     build:
       context: ./frontend-bet
       dockerfile: Dockerfile
+    container_name: frontend-container
     ports:
       - "80:80"
+    depends_on:
+      fastapi-app:
+        condition: service_healthy
     restart: unless-stopped
 
   redis:
-    image: "redis:alpine"
+    image: "redis:7-alpine"
     container_name: redis-container
     ports:
       - "6379:6379"
     restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+
+volumes:
+  redis-data:
