@@ -1,8 +1,9 @@
+import json
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-
+import boto3, tempfile
 import uvicorn
 from fastapi import FastAPI, Depends, HTTPException
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -72,6 +73,22 @@ async def lifespan(app_: FastAPI):
     io_executor.shutdown(wait=False)
 
 load_dotenv()
+
+def setup_firebase_credentials():
+    # If already set (local dev via .env), do nothing
+    if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+        return
+    # Otherwise fetch from Secrets Manager (production)
+    client = boto3.client('secretsmanager', region_name='eu-west-3')
+    secret = client.get_secret_value(SecretId='firebase-credentials')
+    creds = json.loads(secret['SecretString'])
+    tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
+    json.dump(creds, tmp)
+    tmp.close()
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = tmp.name
+
+setup_firebase_credentials()
+
 credential_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 limiter = Limiter(
     key_func=get_remote_address,
