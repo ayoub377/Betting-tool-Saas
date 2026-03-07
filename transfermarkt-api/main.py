@@ -74,18 +74,29 @@ async def lifespan(app_: FastAPI):
 
 load_dotenv()
 
+
 def setup_firebase_credentials():
+    print("DEBUG: Starting firebase credentials setup")
+
     # If already set (local dev via .env), do nothing
     if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+        print("DEBUG: GOOGLE_APPLICATION_CREDENTIALS already set, skipping")
         return
-    # Otherwise fetch from Secrets Manager (production)
-    client = boto3.client('secretsmanager', region_name='eu-west-3')
-    secret = client.get_secret_value(SecretId='firebase-credentials')
-    creds = json.loads(secret['SecretString'])
-    tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
-    json.dump(creds, tmp)
-    tmp.close()
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = tmp.name
+
+    print("DEBUG: Fetching from Secrets Manager...")
+    try:
+        client = boto3.client('secretsmanager', region_name='eu-west-3')
+        secret = client.get_secret_value(SecretId='firebase-credentials')
+        print("DEBUG: Secret fetched successfully")
+        creds = json.loads(secret['SecretString'])
+        tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
+        json.dump(creds, tmp)
+        tmp.close()
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = tmp.name
+        print(f"DEBUG: Credentials written to {tmp.name}")
+    except Exception as e:
+        print(f"DEBUG: ERROR fetching secret: {str(e)}")
+        raise
 
 setup_firebase_credentials()
 
