@@ -1,10 +1,28 @@
-# Use official Python image
-FROM python:3.12-slim-bookworm
+# ============================================================
+# Stage 1: Build dependencies in a separate layer
+# ============================================================
+FROM python:3.12-slim-bookworm AS builder
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
+WORKDIR /app
+
+# Install build-time system dependencies for compiled packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy and install Python dependencies first (cached unless requirements change)
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+# ============================================================
+# Stage 2: Final slim runtime image
+# ============================================================
+FROM python:3.12-slim-bookworm AS runtime
+
+# Install only runtime system dependencies (Chromium for Selenium)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
-    unzip \
     curl \
     xvfb \
     libxi6 \
@@ -14,20 +32,32 @@ RUN apt-get update && apt-get install -y \
     libxrandr2 \
     libgtk-3-0 \
     libasound2 \
+    libpq5 \
     chromium \
     chromium-driver \
-    && apt-get clean
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-# Install Python dependencies
+# Copy installed Python packages from builder
+COPY --from=builder /install /usr/local
+
+# Create non-root user for security
+RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser
+
 WORKDIR /app
-COPY requirements.txt /app/
-RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application files
-COPY . /app
+# Copy application code
+COPY --chown=appuser:appuser . .
+
+# Switch to non-root user
+USER appuser
 
 # Expose the port FastAPI app will run on
 EXPOSE 9000
 
-# Run FastAPI app with Uvicorn
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "9000", "--workers", "1"]
+# Health check for container orchestration (ECS/Docker Compose)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:9000/api/docs || exit 1
+
+# Run FastAPI with optimized settings
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "9000", "--workers", "2", "--loop", "uvloop", "--http", "httptools"]
