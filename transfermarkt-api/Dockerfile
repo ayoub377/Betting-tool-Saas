@@ -49,6 +49,9 @@ WORKDIR /app
 # Copy application code
 COPY --chown=appuser:appuser . .
 
+# Create writable directories for the non-root user
+RUN mkdir -p /app/trained_models && chown appuser:appuser /app/trained_models
+
 # Switch to non-root user
 USER appuser
 
