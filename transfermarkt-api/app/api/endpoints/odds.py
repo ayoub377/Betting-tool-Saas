@@ -3,6 +3,7 @@ import json
 import logging
 import os
 from typing import List, Optional
+import re
 
 import shin
 from fastapi import APIRouter, HTTPException, Depends, Query
@@ -10,7 +11,7 @@ import requests
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 # from app.core.auth import has_access
 from app.core.config import redis_client, rate_limit_dependency
@@ -257,19 +258,25 @@ logger = logging.getLogger(__name__)
 #         return no_vig_data
 #     return {}
 
+_FLASHSCORE_ID_RE = re.compile(r'^[A-Za-z0-9]{8,}$')
+
+
 class TrackRequest(BaseModel):
     home_team: Optional[str] = None
     match_id: Optional[str] = None
+
+    @field_validator("match_id", mode="before")
+    @classmethod
+    def sanitize_match_id(cls, v):
+        """Treat empty / Swagger-default / non-FlashScore-format values as absent."""
+        if not v or not _FLASHSCORE_ID_RE.match(str(v).strip()):
+            return None
+        return str(v).strip()
 
     def validate_inputs(self):
         """Raises ValueError with a clear message if inputs are unusable."""
         if not self.home_team and not self.match_id:
             raise ValueError("Provide either 'home_team' or 'match_id'.")
-        if self.match_id and len(self.match_id) < 6:
-            raise ValueError(
-                f"match_id '{self.match_id}' looks invalid. "
-                "FlashScore match IDs are typically 8+ alphanumeric characters."
-            )
 
 
 @router.post("/track")
