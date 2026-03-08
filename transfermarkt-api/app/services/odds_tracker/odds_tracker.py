@@ -18,17 +18,28 @@ def odds_history_key(match_id: str) -> str:
 TRACKED_INDEX_KEY = "tracked_matches_index"
 
 
-async def store_odds_snapshot(redis_client, match_id: str, odds: dict):
-    """Append one odds snapshot to the match history list."""
+async def store_odds_snapshot(redis_client, match_id: str, odds: dict, sport: str = "football"):
+    """Append one odds snapshot to the match history list.
+
+    For football: odds dict has keys home, draw, away, bookmaker
+    For tennis:   odds dict has keys player1, player2, bookmaker
+    """
     snapshot = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "home": odds.get("home"),
-        "draw": odds.get("draw"),
-        "away": odds.get("away"),
+        "sport": sport,
         "bookmaker": odds.get("bookmaker"),
     }
+
+    if sport == "tennis":
+        snapshot["player1"] = odds.get("player1")
+        snapshot["player2"] = odds.get("player2")
+    else:  # football (default, backward compatible)
+        snapshot["home"] = odds.get("home")
+        snapshot["draw"] = odds.get("draw")
+        snapshot["away"] = odds.get("away")
+
     await redis_client.rpush(odds_history_key(match_id), json.dumps(snapshot))
-    logger.info("Stored odds snapshot for %s: %s", match_id, snapshot)
+    logger.info("Stored odds snapshot for %s (%s): %s", match_id, sport, snapshot)
 
 
 async def get_odds_history(redis_client, match_id: str) -> list[dict]:
