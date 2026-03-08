@@ -3,6 +3,7 @@ import json
 import logging
 import os
 from typing import List, Optional
+import re
 
 import shin
 from fastapi import APIRouter, HTTPException, Depends, Query
@@ -10,12 +11,14 @@ import requests
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 # from app.core.auth import has_access
 from app.core.config import redis_client, rate_limit_dependency
 # from app.models.odds import MatchData, Outcome, H2HMarket, Bookmaker
 from dotenv import load_dotenv
+from app.models.sport import SportType
+from app.services.flashscore_scraper.scraper_factory import get_scraper
 from app.services.flashscore_scraper.flashscore_scraper import FlashScoreScraper
 from app.services.odds_tracker.odds_tracker import (
     register_match, is_already_tracked,
@@ -257,19 +260,31 @@ logger = logging.getLogger(__name__)
 #         return no_vig_data
 #     return {}
 
+_FLASHSCORE_ID_RE = re.compile(r'^[A-Za-z0-9]{8,}$')
+
+
 class TrackRequest(BaseModel):
     home_team: Optional[str] = None
+    player_name: Optional[str] = None  # Tennis: alternative to home_team
     match_id: Optional[str] = None
+    sport: SportType = SportType.FOOTBALL  # Defaults to football for backward compatibility
+
+    @field_validator("match_id", mode="before")
+    @classmethod
+    def sanitize_match_id(cls, v):
+        """Treat empty / Swagger-default / non-FlashScore-format values as absent."""
+        if not v or not _FLASHSCORE_ID_RE.match(str(v).strip()):
+            return None
+        return str(v).strip()
 
     def validate_inputs(self):
         """Raises ValueError with a clear message if inputs are unusable."""
-        if not self.home_team and not self.match_id:
-            raise ValueError("Provide either 'home_team' or 'match_id'.")
-        if self.match_id and len(self.match_id) < 6:
-            raise ValueError(
-                f"match_id '{self.match_id}' looks invalid. "
-                "FlashScore match IDs are typically 8+ alphanumeric characters."
-            )
+        if self.match_id:
+            return  # match_id is always sufficient
+        if self.sport == SportType.FOOTBALL and not self.home_team:
+            raise ValueError("Provide either 'home_team' or 'match_id' for football.")
+        if self.sport == SportType.TENNIS and not self.player_name and not self.home_team:
+            raise ValueError("Provide either 'player_name' or 'match_id' for tennis.")
 
 
 @router.post("/track")
@@ -282,27 +297,34 @@ async def track_match(body: TrackRequest, redis_client=Depends(get_redis)):
         raise HTTPException(status_code=422, detail=str(e))
 
     loop = asyncio.get_event_loop()
-    scraper = FlashScoreScraper(persist_outputs=False)
+    sport = body.sport
+    scraper = get_scraper(sport, persist_outputs=False)
     match_id = body.match_id
 
     # ------------------------------------------------------------------
-    # Step 1 — Resolve match_id from team name if not provided directly
+    # Step 1 — Resolve match_id from participant name if not provided
     # ------------------------------------------------------------------
     if not match_id:
-        logger.info("Step 1: Resolving match_id from home_team='%s'", body.home_team)
+        participant_name = body.player_name or body.home_team
+        logger.info("Step 1: Resolving match_id from participant='%s' (sport=%s)", participant_name, sport.value)
         try:
-            match_id = await loop.run_in_executor(
-                None, scraper.get_team_id_by_name, body.home_team
-            )
+            if sport == SportType.TENNIS:
+                match_id = await loop.run_in_executor(
+                    None, scraper.get_player_id_by_name, participant_name
+                )
+            else:
+                match_id = await loop.run_in_executor(
+                    None, scraper.get_team_id_by_name, participant_name
+                )
             logger.info("Step 1 complete: resolved match_id='%s'", match_id)
         except Exception as e:
             logger.error("Step 1 FAILED: %s", e, exc_info=True)
-            raise HTTPException(status_code=404, detail=f"Could not resolve team name: {e}")
+            raise HTTPException(status_code=404, detail=f"Could not resolve name: {e}")
 
         if not match_id:
             raise HTTPException(
                 status_code=404,
-                detail=f"No upcoming match found for team '{body.home_team}'."
+                detail=f"No upcoming match found for '{participant_name}'."
             )
     else:
         logger.info("Step 1: Using provided match_id='%s' directly.", match_id)
@@ -318,7 +340,7 @@ async def track_match(body: TrackRequest, redis_client=Depends(get_redis)):
     # ------------------------------------------------------------------
     # Step 3 — Scrape match info
     # ------------------------------------------------------------------
-    logger.info("Step 3: Fetching match info for match_id='%s'", match_id)
+    logger.info("Step 3: Fetching match info for match_id='%s' (sport=%s)", match_id, sport.value)
     try:
         match_info = await loop.run_in_executor(None, scraper.get_match_info, match_id)
         logger.info("Step 3 complete: match_info=%s", match_info)
@@ -327,7 +349,12 @@ async def track_match(body: TrackRequest, redis_client=Depends(get_redis)):
         raise HTTPException(status_code=500, detail=f"Could not fetch match info: {e}")
 
     # Reject if match info came back empty — means the match_id is invalid
-    if match_info.get("home_team") == "unknown" and match_info.get("start_time") is None:
+    if sport == SportType.TENNIS:
+        info_empty = match_info.get("player1") == "unknown" and match_info.get("start_time") is None
+    else:
+        info_empty = match_info.get("home_team") == "unknown" and match_info.get("start_time") is None
+
+    if info_empty:
         raise HTTPException(
             status_code=404,
             detail=(
@@ -343,7 +370,7 @@ async def track_match(body: TrackRequest, redis_client=Depends(get_redis)):
     try:
         initial_odds = await loop.run_in_executor(
             None,
-            scraper.get_odds_by_match_id,  # ← uses the new direct method
+            scraper.get_odds_by_match_id,
             match_id
         )
         logger.info("Step 4 complete: initial_odds=%s", initial_odds)
@@ -352,25 +379,46 @@ async def track_match(body: TrackRequest, redis_client=Depends(get_redis)):
         initial_odds = {}
 
     # ------------------------------------------------------------------
-    # Step 5 — Register in Redis
+    # Step 5 — Register in Redis (sport-aware metadata)
     # ------------------------------------------------------------------
-    meta = {
-        "match_id": match_id,
-        "home_team": match_info.get("home_team", body.home_team or "unknown"),
-        "away_team": match_info.get("away_team", "unknown"),
-        "start_time": match_info.get("start_time"),
-        "start_time_raw": match_info.get("start_time_raw"),
-        "status": "tracking",
-        "tracked_since": datetime.now(timezone.utc).isoformat(),
-    }
+    if sport == SportType.TENNIS:
+        meta = {
+            "match_id": match_id,
+            "sport": sport.value,
+            "player1": match_info.get("player1", "unknown"),
+            "player2": match_info.get("player2", "unknown"),
+            # Backward-compatible aliases
+            "home_team": match_info.get("player1", "unknown"),
+            "away_team": match_info.get("player2", "unknown"),
+            "start_time": match_info.get("start_time"),
+            "start_time_raw": match_info.get("start_time_raw"),
+            "status": "tracking",
+            "tracked_since": datetime.now(timezone.utc).isoformat(),
+        }
+    else:
+        meta = {
+            "match_id": match_id,
+            "sport": sport.value,
+            "home_team": match_info.get("home_team", body.home_team or "unknown"),
+            "away_team": match_info.get("away_team", "unknown"),
+            "start_time": match_info.get("start_time"),
+            "start_time_raw": match_info.get("start_time_raw"),
+            "status": "tracking",
+            "tracked_since": datetime.now(timezone.utc).isoformat(),
+        }
     await register_match(redis_client, match_id, meta)
     logger.info("Step 5 complete: meta stored.")
 
     # ------------------------------------------------------------------
     # Step 6 — Store initial odds snapshot
     # ------------------------------------------------------------------
-    if initial_odds.get("home") is not None:
-        await store_odds_snapshot(redis_client, match_id, initial_odds)
+    if sport == SportType.TENNIS:
+        has_initial = initial_odds.get("player1") is not None
+    else:
+        has_initial = initial_odds.get("home") is not None
+
+    if has_initial:
+        await store_odds_snapshot(redis_client, match_id, initial_odds, sport=sport.value)
         logger.info("Step 6: Initial snapshot stored.")
     else:
         logger.info("Step 6: No valid initial odds yet.")
@@ -378,14 +426,15 @@ async def track_match(body: TrackRequest, redis_client=Depends(get_redis)):
     # ------------------------------------------------------------------
     # Step 7 — Start scheduler
     # ------------------------------------------------------------------
-    start_tracking_job(match_id, scraper, redis_client)
+    start_tracking_job(match_id, scraper, redis_client, sport=sport.value)
     logger.info("Step 7: Scheduler job registered.")
 
     return {
         "match_id": match_id,
+        "sport": sport.value,
         "status": "tracking_started",
         "meta": meta,
-        "message": f"Tracking odds every {SCRAPE_INTERVAL_SECONDS}s until 2min before kickoff.",
+        "message": f"Tracking {sport.value} odds every {SCRAPE_INTERVAL_SECONDS}s until kickoff.",
     }
 
 @router.get("/tracked")
@@ -507,8 +556,16 @@ async def get_match_history_summary(match_id: str, redis_client=Depends(get_redi
         }
         processed_history.append(snapshot_with_interval)
 
+    # Sport-aware match label
+    sport = meta.get("sport", "football") if meta else "football"
+    if sport == "tennis":
+        match_label = f"{meta.get('player1', meta.get('home_team'))} vs {meta.get('player2', meta.get('away_team'))}"
+    else:
+        match_label = f"{meta.get('home_team')} vs {meta.get('away_team')}"
+
     return {
-        "match": f"{meta.get('home_team')} vs {meta.get('away_team')}",
+        "sport": sport,
+        "match": match_label,
         "start_time": meta.get("start_time"),
         "total_snapshots": len(processed_history),
         "history": processed_history
