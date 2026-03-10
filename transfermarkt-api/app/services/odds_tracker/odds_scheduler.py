@@ -31,14 +31,14 @@ def _fetch_sharp_odds_sync(api_key, sport_key, event_id, home_team, away_team):
         return {}
 
 
-def make_scrape_job(match_id: str, scraper, redis_client):
+def make_scrape_job(match_id: str, scraper, redis_client, sport: str = "football"):
     """
     Returns an async function used as the APScheduler job.
-    Captures match_id, scraper, and redis_client in closure.
+    Captures match_id, scraper, redis_client and sport in closure.
     """
 
     async def scrape_job():
-        logger.info("Running scheduled odds scrape for match %s", match_id)
+        logger.info("Running scheduled odds scrape for match %s (%s)", match_id, sport)
 
         meta = await get_match_meta(redis_client, match_id)
         if meta:
@@ -59,7 +59,14 @@ def make_scrape_job(match_id: str, scraper, redis_client):
                 scraper.get_odds_by_match_id,
                 match_id
             )
-            if odds.get("home") is not None:
+
+            # Sport-aware validity check
+            if sport == "tennis":
+                has_valid_odds = odds.get("player1") is not None
+            else:
+                has_valid_odds = odds.get("home") is not None
+
+            if has_valid_odds:
                 # Fetch sharp bookmaker odds if Odds API is configured
                 sharp_odds = {}
                 api_key = os.environ.get("ODDS_API_KEY")
@@ -76,10 +83,11 @@ def make_scrape_job(match_id: str, scraper, redis_client):
 
                 await store_odds_snapshot(
                     redis_client, match_id, odds,
+                    sport=sport,
                     sharp_odds=sharp_odds or None,
                 )
             else:
-                logger.warning("No valid odds returned for match %s", match_id)
+                logger.warning("No valid odds returned for match %s (%s)", match_id, sport)
         except Exception as e:
             logger.error("Scrape job failed for match %s: %s", match_id, e, exc_info=True)
 
@@ -90,21 +98,22 @@ def job_id(match_id: str) -> str:
     return f"odds_scrape_{match_id}"
 
 
-def start_tracking_job(match_id: str, scraper, redis_client, initial_delay: float = 0):
+def start_tracking_job(match_id: str, scraper, redis_client, initial_delay: float = 0, sport: str = "football"):
     """
     Schedules a job.
     initial_delay: seconds to wait before the very first execution (useful for restarts).
+    sport: the sport type for this match (determines odds key names).
     """
     run_time = datetime.now(timezone.utc) + timedelta(seconds=initial_delay)
 
     scheduler.add_job(
-        make_scrape_job(match_id, scraper, redis_client),
+        make_scrape_job(match_id, scraper, redis_client, sport=sport),
         trigger=IntervalTrigger(seconds=SCRAPE_INTERVAL_SECONDS),
         id=job_id(match_id),
         replace_existing=True,
         next_run_time=run_time,
     )
-    logger.info("Match %s scheduled (Start delay: %.1fs)", match_id, initial_delay)
+    logger.info("Match %s (%s) scheduled (Start delay: %.1fs)", match_id, sport, initial_delay)
 
 
 def stop_tracking_job(match_id: str):

@@ -23,7 +23,9 @@ from app.services.odds_tracker.odds_scheduler import scheduler, start_tracking_j
 from app.services.odds_tracker.odds_tracker import get_match_meta, get_all_tracked_ids
 from app.models.database import init_db
 
+from app.models.sport import SportType
 from app.services.flashscore_scraper.flashscore_scraper import FlashScoreScraper
+from app.services.flashscore_scraper.tennis_scraper import TennisFlashScoreScraper
 from app.settings import settings
 from dotenv import load_dotenv
 
@@ -46,12 +48,11 @@ async def lifespan(app_: FastAPI):
     # 1. Start Scheduler
     scheduler.start()
 
-    # 2. Setup shared resources
-    # Using one scraper instance is more memory-efficient
-    scraper = FlashScoreScraper(persist_outputs=False)
-
-    # Get the raw redis client (bypass Dependency Injection for lifespan)
-    # Ensure your get_redis_client() helper is available here
+    # 2. Setup shared resources — one scraper instance per sport
+    scrapers = {
+        SportType.FOOTBALL: FlashScoreScraper(persist_outputs=False),
+        SportType.TENNIS: TennisFlashScoreScraper(persist_outputs=False),
+    }
 
     # 3. Recover Jobs with Staggering
     tracked_ids = await get_all_tracked_ids(redis_client)
@@ -61,13 +62,22 @@ async def lifespan(app_: FastAPI):
         for i, match_id in enumerate(tracked_ids):
             meta = await get_match_meta(redis_client, match_id)
             if meta and meta.get("status") == "tracking":
+                # Determine the sport from stored metadata (default to football)
+                sport_str = meta.get("sport", "football")
+                try:
+                    sport = SportType(sport_str)
+                except ValueError:
+                    sport = SportType.FOOTBALL
+                scraper = scrapers.get(sport, scrapers[SportType.FOOTBALL])
+
                 # Stagger the first run by 'i' seconds so they don't all hit at once
                 start_delay = i * 1.5
                 start_tracking_job(
                     match_id,
                     scraper,
                     redis_client,
-                    initial_delay=start_delay
+                    initial_delay=start_delay,
+                    sport=sport_str,
                 )
 
     yield

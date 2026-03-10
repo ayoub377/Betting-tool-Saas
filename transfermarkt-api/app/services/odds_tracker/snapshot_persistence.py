@@ -20,6 +20,7 @@ def persist_match(session: Session, match_id: str, meta: dict):
         return
     row = TrackedMatch(
         match_id=match_id,
+        sport=meta.get("sport", "football"),
         home_team=meta.get("home_team"),
         away_team=meta.get("away_team"),
         start_time=meta.get("start_time"),
@@ -41,10 +42,13 @@ def persist_snapshot(session: Session, match_id: str, snapshot: dict):
 
     row = OddsSnapshot(
         match_id=match_id,
+        sport=snapshot.get("sport", "football"),
         timestamp=snapshot.get("timestamp"),
         home=snapshot.get("home"),
         draw=snapshot.get("draw"),
         away=snapshot.get("away"),
+        player1=snapshot.get("player1"),
+        player2=snapshot.get("player2"),
         bookmaker=snapshot.get("bookmaker"),
         sharp_odds=sharp_odds_json,
     )
@@ -70,17 +74,23 @@ def get_match_snapshots(session: Session, match_id: str) -> list[dict]:
         .order_by(OddsSnapshot.id)
         .all()
     )
-    return [
-        {
+    result = []
+    for r in rows:
+        snap = {
             "timestamp": r.timestamp,
-            "home": r.home,
-            "draw": r.draw,
-            "away": r.away,
+            "sport": r.sport or "football",
             "bookmaker": r.bookmaker,
             "sharp_odds": json.loads(r.sharp_odds) if r.sharp_odds else None,
         }
-        for r in rows
-    ]
+        if r.sport == "tennis":
+            snap["player1"] = r.player1
+            snap["player2"] = r.player2
+        else:
+            snap["home"] = r.home
+            snap["draw"] = r.draw
+            snap["away"] = r.away
+        result.append(snap)
+    return result
 
 
 def get_match_meta_from_db(session: Session, match_id: str) -> Optional[dict]:
@@ -90,6 +100,7 @@ def get_match_meta_from_db(session: Session, match_id: str) -> Optional[dict]:
         return None
     return {
         "match_id": row.match_id,
+        "sport": row.sport or "football",
         "home_team": row.home_team,
         "away_team": row.away_team,
         "start_time": row.start_time,

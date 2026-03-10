@@ -34,21 +34,33 @@ def _persist_snapshot_to_db(match_id: str, snapshot: dict):
 
 async def store_odds_snapshot(
     redis_client, match_id: str, odds: dict,
+    sport: str = "football",
     sharp_odds: Optional[dict] = None,
 ):
-    """Append one odds snapshot to Redis AND persist to PostgreSQL."""
+    """Append one odds snapshot to Redis AND persist to PostgreSQL.
+
+    For football: odds dict has keys home, draw, away, bookmaker
+    For tennis:   odds dict has keys player1, player2, bookmaker
+    """
     snapshot = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "home": odds.get("home"),
-        "draw": odds.get("draw"),
-        "away": odds.get("away"),
+        "sport": sport,
         "bookmaker": odds.get("bookmaker"),
     }
+
+    if sport == "tennis":
+        snapshot["player1"] = odds.get("player1")
+        snapshot["player2"] = odds.get("player2")
+    else:  # football (default, backward compatible)
+        snapshot["home"] = odds.get("home")
+        snapshot["draw"] = odds.get("draw")
+        snapshot["away"] = odds.get("away")
+
     if sharp_odds:
         snapshot["sharp_odds"] = sharp_odds
 
     await redis_client.rpush(odds_history_key(match_id), json.dumps(snapshot))
-    logger.info("Stored odds snapshot for %s: %s", match_id, snapshot)
+    logger.info("Stored odds snapshot for %s (%s): %s", match_id, sport, snapshot)
 
     # Dual-write to PostgreSQL (non-blocking, best-effort)
     import asyncio
