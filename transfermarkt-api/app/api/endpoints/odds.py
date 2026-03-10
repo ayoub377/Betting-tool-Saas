@@ -26,6 +26,11 @@ from app.services.odds_tracker.odds_tracker import (
 from app.services.odds_tracker.odds_scheduler import start_tracking_job, scheduler, stop_tracking_job
 from app.core.config import SCRAPE_INTERVAL_SECONDS
 from app.services.odds_tracker.odds_tracker import store_odds_snapshot
+from app.models.database import SessionLocal
+from app.services.odds_tracker.snapshot_persistence import (
+    get_match_snapshots as db_get_snapshots,
+    get_match_meta_from_db,
+)
 
 load_dotenv()
 router = APIRouter()
@@ -264,6 +269,7 @@ _FLASHSCORE_ID_RE = re.compile(r'^[A-Za-z0-9]{8,}$')
 class TrackRequest(BaseModel):
     home_team: Optional[str] = None
     match_id: Optional[str] = None
+    sport_key: Optional[str] = None  # e.g. "soccer_epl" — helps Odds API event lookup
 
     @field_validator("match_id", mode="before")
     @classmethod
@@ -359,25 +365,61 @@ async def track_match(body: TrackRequest, redis_client=Depends(get_redis)):
         initial_odds = {}
 
     # ------------------------------------------------------------------
-    # Step 5 — Register in Redis
+    # Step 5 — Register in Redis + resolve Odds API event
     # ------------------------------------------------------------------
+    home_team = match_info.get("home_team", body.home_team or "unknown")
+    away_team = match_info.get("away_team", "unknown")
+
     meta = {
         "match_id": match_id,
-        "home_team": match_info.get("home_team", body.home_team or "unknown"),
-        "away_team": match_info.get("away_team", "unknown"),
+        "home_team": home_team,
+        "away_team": away_team,
         "start_time": match_info.get("start_time"),
         "start_time_raw": match_info.get("start_time_raw"),
         "status": "tracking",
         "tracked_since": datetime.now(timezone.utc).isoformat(),
     }
+
+    # Try to resolve matching Odds API event (optional — needs ODDS_API_KEY)
+    odds_api_key = os.getenv("ODDS_API_KEY")
+    if odds_api_key:
+        try:
+            from app.services.odds_api.odds_api_client import find_event
+            result = await loop.run_in_executor(
+                None, find_event, odds_api_key, home_team, away_team, body.sport_key,
+            )
+            if result:
+                meta["odds_api_event_id"] = result[0]
+                meta["odds_api_sport_key"] = result[1]
+                logger.info("Step 5: Mapped to Odds API event %s (%s)", result[0], result[1])
+            else:
+                logger.info("Step 5: No matching Odds API event found.")
+        except Exception as e:
+            logger.warning("Step 5: Odds API lookup failed: %s", e)
+
     await register_match(redis_client, match_id, meta)
     logger.info("Step 5 complete: meta stored.")
 
     # ------------------------------------------------------------------
-    # Step 6 — Store initial odds snapshot
+    # Step 6 — Store initial odds snapshot (with sharp odds if available)
     # ------------------------------------------------------------------
+    initial_sharp_odds = None
     if initial_odds.get("home") is not None:
-        await store_odds_snapshot(redis_client, match_id, initial_odds)
+        if odds_api_key and meta.get("odds_api_event_id"):
+            try:
+                from app.services.odds_api.odds_api_client import fetch_sharp_odds
+                initial_sharp_odds = await loop.run_in_executor(
+                    None, fetch_sharp_odds,
+                    odds_api_key, meta["odds_api_sport_key"],
+                    meta["odds_api_event_id"], home_team, away_team,
+                )
+            except Exception as e:
+                logger.warning("Step 6: Sharp odds fetch failed: %s", e)
+
+        await store_odds_snapshot(
+            redis_client, match_id, initial_odds,
+            sharp_odds=initial_sharp_odds or None,
+        )
         logger.info("Step 6: Initial snapshot stored.")
     else:
         logger.info("Step 6: No valid initial odds yet.")
@@ -487,12 +529,26 @@ async def stream_odds_history(
 
 @router.get("/history/{match_id}/summary")
 async def get_match_history_summary(match_id: str, redis_client=Depends(get_redis)):
-    # 1. Fetch metadata and the raw history list
+    # 1. Try Redis first (fast, real-time data)
     meta = await get_match_meta(redis_client, match_id)
     history = await get_odds_history(redis_client, match_id)
 
+    # 2. Fallback to PostgreSQL when Redis data is gone
     if not history:
+        logger.info("Redis empty for %s — falling back to PostgreSQL.", match_id)
+        session = SessionLocal()
+        try:
+            if not meta:
+                meta = get_match_meta_from_db(session, match_id)
+            history = db_get_snapshots(session, match_id)
+        finally:
+            session.close()
+
+    if not meta and not history:
         return {"match_id": match_id, "history": [], "message": "No snapshots recorded yet."}
+
+    if not meta:
+        meta = {}
 
     processed_history = []
 
@@ -515,7 +571,7 @@ async def get_match_history_summary(match_id: str, redis_client=Depends(get_redi
         processed_history.append(snapshot_with_interval)
 
     return {
-        "match": f"{meta.get('home_team')} vs {meta.get('away_team')}",
+        "match": f"{meta.get('home_team', 'unknown')} vs {meta.get('away_team', 'unknown')}",
         "start_time": meta.get("start_time"),
         "total_snapshots": len(processed_history),
         "history": processed_history

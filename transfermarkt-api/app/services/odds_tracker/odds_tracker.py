@@ -18,8 +18,25 @@ def odds_history_key(match_id: str) -> str:
 TRACKED_INDEX_KEY = "tracked_matches_index"
 
 
-async def store_odds_snapshot(redis_client, match_id: str, odds: dict):
-    """Append one odds snapshot to the match history list."""
+def _persist_snapshot_to_db(match_id: str, snapshot: dict):
+    """Write a snapshot to PostgreSQL. Runs in a thread — must be sync."""
+    try:
+        from app.models.database import SessionLocal
+        from app.services.odds_tracker.snapshot_persistence import persist_snapshot
+        session = SessionLocal()
+        try:
+            persist_snapshot(session, match_id, snapshot)
+        finally:
+            session.close()
+    except Exception as e:
+        logger.warning("DB persist failed for snapshot %s: %s", match_id, e)
+
+
+async def store_odds_snapshot(
+    redis_client, match_id: str, odds: dict,
+    sharp_odds: Optional[dict] = None,
+):
+    """Append one odds snapshot to Redis AND persist to PostgreSQL."""
     snapshot = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "home": odds.get("home"),
@@ -27,8 +44,17 @@ async def store_odds_snapshot(redis_client, match_id: str, odds: dict):
         "away": odds.get("away"),
         "bookmaker": odds.get("bookmaker"),
     }
+    if sharp_odds:
+        snapshot["sharp_odds"] = sharp_odds
+
     await redis_client.rpush(odds_history_key(match_id), json.dumps(snapshot))
     logger.info("Stored odds snapshot for %s: %s", match_id, snapshot)
+
+    # Dual-write to PostgreSQL (non-blocking, best-effort)
+    import asyncio
+    asyncio.get_event_loop().run_in_executor(
+        None, _persist_snapshot_to_db, match_id, snapshot
+    )
 
 
 async def get_odds_history(redis_client, match_id: str) -> list[dict]:
@@ -51,11 +77,44 @@ async def is_already_tracked(redis_client, match_id: str) -> bool:
     return await redis_client.sismember(TRACKED_INDEX_KEY, match_id)
 
 
+def _persist_match_to_db(match_id: str, meta: dict):
+    """Write match metadata to PostgreSQL. Runs in a thread — must be sync."""
+    try:
+        from app.models.database import SessionLocal
+        from app.services.odds_tracker.snapshot_persistence import persist_match
+        session = SessionLocal()
+        try:
+            persist_match(session, match_id, meta)
+        finally:
+            session.close()
+    except Exception as e:
+        logger.warning("DB persist failed for match %s: %s", match_id, e)
+
+
 async def register_match(redis_client, match_id: str, meta: dict):
-    """Persist match metadata and add to the tracking index."""
+    """Persist match metadata to Redis and PostgreSQL, add to tracking index."""
     await redis_client.set(match_meta_key(match_id), json.dumps(meta))
     await redis_client.sadd(TRACKED_INDEX_KEY, match_id)
     logger.info("Registered match %s for tracking: %s", match_id, meta)
+
+    import asyncio
+    asyncio.get_event_loop().run_in_executor(
+        None, _persist_match_to_db, match_id, meta
+    )
+
+
+def _update_match_status_in_db(match_id: str, status: str):
+    """Update match status in PostgreSQL. Runs in a thread — must be sync."""
+    try:
+        from app.models.database import SessionLocal
+        from app.services.odds_tracker.snapshot_persistence import update_match_status
+        session = SessionLocal()
+        try:
+            update_match_status(session, match_id, status)
+        finally:
+            session.close()
+    except Exception as e:
+        logger.warning("DB status update failed for match %s: %s", match_id, e)
 
 
 async def unregister_match(redis_client, match_id: str):
@@ -68,3 +127,8 @@ async def unregister_match(redis_client, match_id: str):
         meta["status"] = "completed"
         await redis_client.set(match_meta_key(match_id), json.dumps(meta))
     logger.info("Unregistered match %s — tracking complete.", match_id)
+
+    import asyncio
+    asyncio.get_event_loop().run_in_executor(
+        None, _update_match_status_in_db, match_id, "completed"
+    )

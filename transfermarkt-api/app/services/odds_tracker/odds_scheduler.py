@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone, timedelta
 
@@ -18,6 +19,16 @@ logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler()
 
 io_executor = ThreadPoolExecutor(max_workers=50)
+
+
+def _fetch_sharp_odds_sync(api_key, sport_key, event_id, home_team, away_team):
+    """Fetch sharp bookmaker odds (sync, runs in thread pool)."""
+    try:
+        from app.services.odds_api.odds_api_client import fetch_sharp_odds
+        return fetch_sharp_odds(api_key, sport_key, event_id, home_team, away_team)
+    except Exception as e:
+        logger.warning("Sharp odds fetch failed: %s", e)
+        return {}
 
 
 def make_scrape_job(match_id: str, scraper, redis_client):
@@ -49,7 +60,24 @@ def make_scrape_job(match_id: str, scraper, redis_client):
                 match_id
             )
             if odds.get("home") is not None:
-                await store_odds_snapshot(redis_client, match_id, odds)
+                # Fetch sharp bookmaker odds if Odds API is configured
+                sharp_odds = {}
+                api_key = os.environ.get("ODDS_API_KEY")
+                if api_key and meta:
+                    event_id = meta.get("odds_api_event_id")
+                    sport_key = meta.get("odds_api_sport_key")
+                    if event_id and sport_key:
+                        sharp_odds = await loop.run_in_executor(
+                            io_executor,
+                            _fetch_sharp_odds_sync,
+                            api_key, sport_key, event_id,
+                            meta.get("home_team", ""), meta.get("away_team", ""),
+                        )
+
+                await store_odds_snapshot(
+                    redis_client, match_id, odds,
+                    sharp_odds=sharp_odds or None,
+                )
             else:
                 logger.warning("No valid odds returned for match %s", match_id)
         except Exception as e:
