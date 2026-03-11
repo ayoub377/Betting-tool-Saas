@@ -11,6 +11,7 @@ services:
         condition: service_healthy
     environment:
       - REDIS_HOST=redis
+      - DATABASE_URL=${DATABASE_URL}
     env_file:
       - ./transfermarkt-api/.env
     restart: unless-stopped
