@@ -21,6 +21,7 @@ from app.core.config import rate_limit_dependency, redis_client
 
 from app.services.odds_tracker.odds_scheduler import scheduler, start_tracking_job
 from app.services.odds_tracker.odds_tracker import get_match_meta, get_all_tracked_ids
+from app.models.database import init_db
 
 from app.models.sport import SportType
 from app.services.flashscore_scraper.flashscore_scraper import FlashScoreScraper
@@ -41,6 +42,9 @@ io_executor = ThreadPoolExecutor(max_workers=50)
 
 @asynccontextmanager
 async def lifespan(app_: FastAPI):
+    # 0. Ensure database tables exist
+    init_db()
+
     # 1. Start Scheduler
     scheduler.start()
 
